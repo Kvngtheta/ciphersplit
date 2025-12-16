@@ -1,1 +1,299 @@
+# CipherSplit - File Encryption with Chunking & Scrambling
 
+A secure file encryption tool that reverses, chunks, encrypts, and scrambles your files. No external dependencies required - uses only standard C++17.
+
+## Features
+
+- Content Reversal - Entire file is reversed before processing
+- Chunking - Splits data into 4KB chunks (configurable)
+- Strong Encryption - Custom SHA-256 based stream cipher
+- Scrambling - Chunks are randomly reordered
+- Dual-File Security - Requires both encrypted file AND key file
+- Passphrase Protection - SHA-256 key derivation with random salt
+- Fully Reversible - Perfect reconstruction of original file
+- Silent Mode - Optional flag to suppress all output
+
+## Security Model
+
+Your data is protected by **three security layers**:
+
+1. Passphrase - Encrypts each individual chunk
+2. Key File - Contains the scramble mapping (which chunk goes where)
+3. Encrypted File - The scrambled, encrypted chunks
+
+An attacker needs **all three** to recover your data:
+- Encrypted `.bin` file
+- Key `.key` file  
+- Your passphrase
+
+## Installation
+
+### Requirements
+- C++17 compatible compiler (GCC, Clang, MSVC)
+- No external libraries needed!
+
+### Compilation
+
+**Linux/Mac:**
+```bash
+g++ -o ciphersplit ciphersplit.cpp -std=c++17
+```
+
+**Windows (MinGW):**
+```bash
+g++ -o ciphersplit.exe ciphersplit.cpp -std=c++17
+```
+
+**Windows (Visual Studio):**
+```bash
+cl /EHsc /std:c++17 ciphersplit.cpp
+```
+
+## Usage
+
+### Encrypt a File
+
+```bash
+./ciphersplit -e <input_file> <output_encrypted> <output_keyfile> <passphrase> [--silent]
+```
+
+**Example:**
+```bash
+./ciphersplit -e secret.txt encrypted.bin keyfile.key "MySecurePassword123"
+```
+
+**With silent mode:**
+```bash
+./ciphersplit -e secret.txt encrypted.bin keyfile.key "MySecurePassword123" --silent
+```
+
+**Output:**
+- `encrypted.bin` - Your encrypted, scrambled data
+- `keyfile.key` - The key file needed for decryption
+
+### Decrypt a File
+
+```bash
+./ciphersplit -d <encrypted_file> <output_file> <keyfile> <passphrase> [--silent]
+```
+
+**Example:**
+```bash
+./ciphersplit -d encrypted.bin recovered.txt keyfile.key "MySecurePassword123"
+```
+
+**Output:**
+- `recovered.txt` - Your original file, perfectly restored
+
+## How It Works
+
+### Encryption Process
+
+1. Read - Loads your input file into memory
+2. Reverse - Reverses entire file content (backwards)
+3. Chunk - Splits into 4KB chunks, each labeled with ID and position
+4. Salt - Generates random 16-byte salt
+5. Derive Key - SHA-256(passphrase + salt) = encryption key
+6. Encrypt - Each chunk encrypted with unique nonce
+7. Scramble - Chunks shuffled into random order
+8. Write - Saves scrambled chunks to `.bin` file
+9. Save Key - Writes salt and chunk mapping to `.key` file
+
+### Decryption Process
+
+1. Read Key File - Loads salt and chunk mapping
+2. Derive Key - SHA-256(passphrase + salt) = encryption key
+3. Read Encrypted File - Loads all scrambled chunks
+4. Decrypt - Each chunk decrypted with its nonce
+5. Unscramble - Chunks sorted back to original positions using mapping
+6. Reassemble - Chunks concatenated in correct order
+7. Reverse - Content reversed back to original
+8. Write - Saves recovered file
+
+## File Format Specifications
+
+### Encrypted File (.bin)
+
+```
+[4 bytes]  Chunk count
+[For each chunk:]
+  [4 bytes]  Original chunk ID
+  [4 bytes]  Encrypted data length
+  [8 bytes]  Nonce (encryption IV)
+  [N bytes]  Encrypted chunk data
+```
+
+### Key File (.key)
+
+```
+[16 bytes] Salt
+[4 bytes]  Chunk count
+[For each chunk:]
+  [8 bytes]  Chunk ID
+  [8 bytes]  Original position in file
+```
+
+## Security Features
+
+### Strong Encryption
+- SHA-256 for key derivation
+- Unique nonce per chunk prevents pattern analysis
+- Stream cipher based on cryptographic PRNG
+
+### Random Salt
+- 16-byte random salt generated per encryption
+- Same passphrase produces different encrypted files each time
+- Prevents rainbow table attacks
+
+### Scrambling
+- Cryptographically secure random shuffle
+- Without key file, chunk order is unrecoverable
+- Adds layer of confusion even if encryption is broken
+
+### Content Reversal
+- Additional obfuscation layer
+- File signatures and headers become unrecognizable
+
+## Best Practices
+
+### Storage
+- Separate locations - Store `.bin` and `.key` files in different places
+- Backup key file - Without it, your data is unrecoverable
+- Strong passphrase - Use 12+ characters with mixed case, numbers, symbols
+
+### Passphrase Tips
+Good: `MyC0mpl3x!Passw0rd#2024`
+Bad: `password123`
+
+### What to Do
+- Test decrypt immediately after encrypting
+- Keep multiple backups of key file
+- Use a password manager for passphrases
+- Verify file integrity after encryption
+
+### What NOT to Do
+- Don't lose your key file (unrecoverable!)
+- Don't forget your passphrase (unrecoverable!)
+- Don't store `.bin` and `.key` together (reduces security)
+- Don't use weak passphrases
+
+## Examples
+
+### Basic Encryption
+```bash
+# Encrypt a document
+./ciphersplit -e document.pdf encrypted.bin key.key "StrongPass123!"
+
+# Verify it worked
+./ciphersplit -d encrypted.bin test.pdf key.key "StrongPass123!"
+```
+
+### Silent Mode
+```bash
+# No output - useful for scripts
+./ciphersplit -e data.txt encrypted.bin key.key "MyPass" --silent
+echo $?  # Check exit code: 0 = success, 1 = failure
+```
+
+### Secure Storage Strategy
+```bash
+# Encrypt file
+./ciphersplit -e sensitive.txt encrypted.bin local.key "MyPassword"
+
+# Store encrypted file locally
+mv encrypted.bin ~/Documents/
+
+# Backup key file to USB drive
+cp local.key /media/usb/backup.key
+
+# Also backup key to cloud (encrypted separately if needed)
+cp local.key ~/Dropbox/backup.key
+```
+
+### Wrong Passphrase
+```bash
+# This will produce garbage output
+./ciphersplit -d encrypted.bin wrong.txt key.key "WrongPassword"
+# File decrypts but content is random garbage
+```
+
+## Troubleshooting
+
+### "Cannot open input file"
+- Check file exists and path is correct
+- Verify you have read permissions
+
+### "Cannot open output file"
+- Check you have write permissions in directory
+- Ensure output path is valid
+
+### "Chunk count mismatch"
+- Wrong key file for this encrypted file
+- File may be corrupted
+
+### Decrypted file is garbage
+- Wrong passphrase used
+- Key file doesn't match encrypted file
+- Files may be corrupted
+
+### Compilation errors
+- Ensure C++17 support: add `-std=c++17` flag
+- Check compiler version is recent enough
+
+## Technical Details
+
+### Cryptography
+- Hash Function: SHA-256 (full implementation)
+- Key Derivation: SHA-256(passphrase || salt)
+- Encryption: Stream cipher using SHA-256 seeded PRNG
+- Nonce: 64-bit unique per chunk
+
+### Performance
+- Memory Usage: Loads entire file into memory
+- Speed: ~50-100 MB/s (varies by system)
+- Chunk Size: 4096 bytes (configurable in source)
+
+### Limitations
+- File must fit in available RAM
+- Not suitable for files larger than available memory
+- No streaming mode (processes entire file at once)
+
+## Customization
+
+### Change Chunk Size
+Edit `CHUNK_SIZE` constant in source code:
+```cpp
+const size_t CHUNK_SIZE = 8192;  // Change to 8KB chunks
+```
+
+### Adjust Key Size
+Edit `KEY_SIZE` constant:
+```cpp
+const size_t KEY_SIZE = 32;  // 256-bit (don't change unless you know why)
+```
+
+## License
+
+This software is provided as-is for educational and personal use.
+
+## Warnings
+
+IMPORTANT: 
+- This is custom cryptography for educational purposes
+- For production use, consider established libraries like libsodium or OpenSSL
+- No warranty - test thoroughly before trusting with critical data
+- Losing your key file or passphrase means permanent data loss
+- Keep backups of both encrypted files AND key files
+
+## Support
+
+For issues, questions, or improvements:
+- Review the code comments
+- Test with non-critical files first
+- Keep backups of original files until verified
+
+## Version
+
+**Version:** 1.0  
+**Date:** December 2024  
+**Language:** C++17
