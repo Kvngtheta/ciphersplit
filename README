@@ -35,17 +35,17 @@ An attacker needs **all three** to recover your data:
 ### Compilation
 
 **Linux/Mac:**
-```bash
+```
 g++ -o ciphersplit ciphersplit.cpp -std=c++17
 ```
 
 **Windows (MinGW):**
-```bash
+```
 g++ -o ciphersplit.exe ciphersplit.cpp -std=c++17
 ```
 
 **Windows (Visual Studio):**
-```bash
+```
 cl /EHsc /std:c++17 ciphersplit.cpp
 ```
 
