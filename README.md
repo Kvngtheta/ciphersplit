@@ -12,6 +12,8 @@ A secure file and directory encryption tool that reverses, chunks, encrypts, and
 - Passphrase Protection - SHA-256 key derivation with random salt
 - Fully Reversible - Perfect reconstruction of original file
 - Directory Support - Recursively encrypt/decrypt entire folder structures
+- Secure Deletion - Delete or shred original files after encryption
+- Custom Splash Screens - Personalize the interface
 - Silent Mode - Optional flag to suppress all output
 
 ## Security Model
@@ -119,6 +121,64 @@ cl /EHsc /std:c++17 ciphersplit.cpp
 - Recreates original directory structure in `output_directory`
 - All files decrypted to their original names and locations
 
+## Secure Deletion Options
+
+### Delete Originals After Encryption
+
+```bash
+./ciphersplit -e secret.txt encrypted.bin key.key "pass" --delete
+```
+
+**What it does:**
+- Encrypts the file
+- Deletes the original file immediately after successful encryption
+- Fast deletion (standard filesystem delete)
+
+### Securely Shred Originals After Encryption
+
+```bash
+./ciphersplit -e secret.txt encrypted.bin key.key "pass" --shred
+```
+
+**What it does:**
+- Encrypts the file
+- Overwrites original with random data (3 passes)
+- Makes data recovery virtually impossible
+- Slower but much more secure
+
+### Directory Mode with Shredding
+
+```bash
+./ciphersplit -E ~/Documents ~/Encrypted "pass" --shred
+```
+
+**What it does:**
+- Encrypts all files in directory
+- Shreds each original file after encryption
+- Removes entire original directory structure
+
+## Splash Screen Customization
+
+### Disable Splash Screen
+
+```bash
+./ciphersplit -e file.txt enc.bin key.key "pass" --no-splash
+```
+
+### Use Custom Splash Screen
+
+```bash
+./ciphersplit -e file.txt enc.bin key.key "pass" --splash mysplash.txt
+```
+
+Create `mysplash.txt` with your own ASCII art:
+```
+  ╔═══════════════════════════╗
+  ║   MY CUSTOM ENCRYPTOR     ║
+  ║   Protect Your Data       ║
+  ╚═══════════════════════════╝
+```
+
 ## How It Works
 
 ### Single File Encryption Process
@@ -212,6 +272,15 @@ subdirectory/image.jpg|file_2.bin
 - Additional obfuscation layer
 - File signatures and headers become unrecognizable
 
+### Secure Deletion
+- --delete: Standard filesystem deletion
+- --shred: 3-pass random overwrite before deletion
+  - Pass 1: Random data overwrite
+  - Pass 2: Random data overwrite
+  - Pass 3: Random data overwrite
+  - Final: Filesystem deletion
+- Makes forensic recovery extremely difficult
+
 ## Best Practices
 
 ### Storage
@@ -228,12 +297,16 @@ Bad: `password123`
 - Keep multiple backups of key file
 - Use a password manager for passphrases
 - Verify file integrity after encryption
+- Use --shred for truly sensitive data (slower but secure)
+- Test recovery before deleting/shredding originals on important data
 
 ### What NOT to Do
 - Don't lose your key file (unrecoverable!)
 - Don't forget your passphrase (unrecoverable!)
 - Don't store `.bin` and `.key` together (reduces security)
 - Don't use weak passphrases
+- Don't use --delete or --shred until you've verified encryption works
+- Don't use --shred on mechanical hard drives repeatedly (wear)
 
 ## Examples
 
@@ -246,21 +319,44 @@ Bad: `password123`
 ./ciphersplit -d encrypted.bin test.pdf key.key "StrongPass123!"
 ```
 
-### Directory Encryption
+### Encrypt and Delete Original
 ```bash
-# Encrypt entire project folder
-./ciphersplit -E ~/Projects/MyApp ~/Backup/MyApp_encrypted "SecurePass2024"
+# Fast delete
+./ciphersplit -e sensitive.doc encrypted.bin key.key "pass" --delete
+
+# Secure shred (recommended for sensitive data)
+./ciphersplit -e topsecret.pdf encrypted.bin key.key "pass" --shred
+```
+
+### Directory Encryption with Shredding
+```bash
+# Encrypt entire project folder and securely remove originals
+./ciphersplit -E ~/Projects/MyApp ~/Backup/MyApp_encrypted "SecurePass2024" --shred
 
 # Later, decrypt it back
 ./ciphersplit -D ~/Backup/MyApp_encrypted ~/Projects/MyApp_restored "SecurePass2024"
 ```
 
+### Custom Splash Screen
+```bash
+# Create your splash file
+cat > company_splash.txt << 'EOF'
+  ================================
+      ACME Corp Secure Vault
+      Protecting Your Assets
+  ================================
+EOF
+
+# Use it
+./ciphersplit -e data.xlsx enc.bin key.key "pass" --splash company_splash.txt
+```
+
 ### Backup Strategy with Directory Mode
 ```bash
-# Encrypt sensitive documents
-./ciphersplit -E ~/Documents/Tax_Returns ~/Encrypted/Taxes_2024 "MyTaxPassword"
+# Encrypt sensitive documents and shred originals
+./ciphersplit -E ~/Documents/Tax_Returns ~/Encrypted/Taxes_2024 "MyTaxPassword" --shred
 
-# Copy encrypted folder to cloud storage
+# Copy encrypted folder to cloud storage (safe, originals are gone)
 cp -r ~/Encrypted/Taxes_2024 ~/Dropbox/Backups/
 
 # Store passphrase separately (password manager)
@@ -269,14 +365,23 @@ cp -r ~/Encrypted/Taxes_2024 ~/Dropbox/Backups/
 ./ciphersplit -D ~/Dropbox/Backups/Taxes_2024 ~/Restored/Tax_Returns "MyTaxPassword"
 ```
 
-### Silent Mode
+### Silent Mode for Scripts
 ```bash
-# No output - useful for scripts
-./ciphersplit -e data.txt encrypted.bin key.key "MyPass" --silent
+# No output - useful for automation
+./ciphersplit -e data.txt encrypted.bin key.key "MyPass" --silent --delete
 echo $?  # Check exit code: 0 = success, 1 = failure
 
-# Silent directory encryption
-./ciphersplit -E ~/data ~/encrypted "pass" --silent && echo "Success" || echo "Failed"
+# Silent directory encryption with shredding
+./ciphersplit -E ~/data ~/encrypted "pass" --silent --shred && echo "Done" || echo "Failed"
+```
+
+### Combining Options
+```bash
+# Encrypt, shred, no splash, silent mode
+./ciphersplit -e secret.txt enc.bin key.key "pass" --shred --no-splash --silent
+
+# Directory mode with all options
+./ciphersplit -E ~/folder ~/encrypted "pass" --shred --silent
 ```
 
 ### Secure Storage Strategy
@@ -324,6 +429,16 @@ cp local.key ~/Dropbox/backup.key
 - Missing or corrupted `directory.idx` file
 - Wrong passphrase
 - Missing .bin or .key files
+
+### Original files not deleted
+- Encryption failed (files preserved for safety)
+- Insufficient permissions to delete
+- Check return code and error messages
+
+### Shredding is slow
+- Shredding overwrites files 3 times with random data
+- This is intentional for security
+- Use --delete for faster (but less secure) removal
 
 ### Compilation errors
 - Ensure C++17 support: add `-std=c++17` flag
@@ -388,6 +503,7 @@ For issues, questions, or improvements:
 
 Version: 2.0  
 Date: December 2025
+
 Language: C++17
 
 ## Changelog
@@ -398,6 +514,11 @@ Version 2.0:
 - Directory structure preservation
 - Individual file encryption in directory mode
 - Master index file for directory mapping
+- Added --delete flag for removing originals after encryption
+- Added --shred flag for secure 3-pass overwrite deletion
+- Added custom splash screen support (--splash)
+- Added --no-splash flag to disable splash screen
+- Improved error handling for file operations
 
 Version 1.0:
 - Initial release
