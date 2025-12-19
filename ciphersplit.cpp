@@ -18,6 +18,9 @@ const size_t CHUNK_SIZE = 4096;
 const size_t KEY_SIZE = 32;
 
 bool SILENT_MODE = false;
+bool DELETE_MODE = false;
+bool SHRED_MODE = false;
+bool SHOW_SPLASH = true;
 
 struct Chunk {
     size_t id;
@@ -125,6 +128,110 @@ public:
         return hash;
     }
 };
+
+void showDefaultSplash() {
+    std::cout << R"(
+   ____ _       _               ____        _ _ _   
+  / ___(_)_ __ | |__   ___ _ __/ ___| _ __ | (_) |_ 
+ | |   | | '_ \| '_ \ / _ \ '__\___ \| '_ \| | | __|
+ | |___| | |_) | | | |  __/ |   ___) | |_) | | | |_ 
+  \____|_| .__/|_| |_|\___|_|  |____/| .__/|_|_|\__|
+         |_|                         |_|            
+)" << std::endl;
+    std::cout << "  Secure File/Directory Encryption with Chunking & Scrambling" << std::endl;
+    std::cout << "  Version 2.0 | https://github.com/yourusername/ciphersplit" << std::endl;
+    std::cout << std::endl;
+}
+
+void showCustomSplash(const std::string& splashFile) {
+    std::ifstream splash(splashFile);
+    if (splash) {
+        std::string line;
+        while (std::getline(splash, line)) {
+            std::cout << line << std::endl;
+        }
+        std::cout << std::endl;
+    } else {
+        showDefaultSplash();
+    }
+}
+
+// Securely shred a file by overwriting with random data
+bool shredFile(const std::string& filepath, int passes = 3) {
+    if (!fs::exists(filepath)) {
+        return false;
+    }
+    
+    size_t fileSize = fs::file_size(filepath);
+    std::random_device rd;
+    std::mt19937_64 rng(rd());
+    
+    for (int pass = 0; pass < passes; ++pass) {
+        std::ofstream file(filepath, std::ios::binary | std::ios::in | std::ios::out);
+        if (!file) {
+            return false;
+        }
+        
+        // Overwrite with random data
+        std::vector<uint8_t> randomData(4096);
+        size_t remaining = fileSize;
+        
+        while (remaining > 0) {
+            size_t writeSize = std::min(remaining, randomData.size());
+            for (size_t i = 0; i < writeSize; ++i) {
+                randomData[i] = static_cast<uint8_t>(rng() & 0xFF);
+            }
+            file.write(reinterpret_cast<const char*>(randomData.data()), writeSize);
+            remaining -= writeSize;
+        }
+        
+        file.close();
+    }
+    
+    // Finally delete the file
+    return fs::remove(filepath);
+}
+
+// Delete file or directory
+bool deleteFile(const std::string& filepath) {
+    try {
+        if (fs::is_directory(filepath)) {
+            return fs::remove_all(filepath) > 0;
+        } else {
+            return fs::remove(filepath);
+        }
+    } catch (const std::exception& e) {
+        if (!SILENT_MODE) {
+            std::cerr << "Error deleting " << filepath << ": " << e.what() << "\n";
+        }
+        return false;
+    }
+}
+
+// Recursively shred directory
+bool shredDirectory(const std::string& dirpath, int passes = 3) {
+    try {
+        for (const auto& entry : fs::recursive_directory_iterator(dirpath)) {
+            if (fs::is_regular_file(entry)) {
+                if (!SILENT_MODE) {
+                    std::cout << "Shredding: " << entry.path().string() << std::endl;
+                }
+                if (!shredFile(entry.path().string(), passes)) {
+                    if (!SILENT_MODE) {
+                        std::cerr << "Failed to shred: " << entry.path().string() << "\n";
+                    }
+                }
+            }
+        }
+        // Remove empty directories
+        return fs::remove_all(dirpath) > 0;
+    } catch (const std::exception& e) {
+        if (!SILENT_MODE) {
+            std::cerr << "Error shredding directory: " << e.what() << "\n";
+        }
+        return false;
+    }
+}
 
 // Generate pseudo-random bytes using seed
 std::vector<uint8_t> generatePRNG(size_t len, uint64_t seed) {
@@ -264,6 +371,19 @@ bool encryptFile(const std::string& inputFile, const std::string& outputFile,
     }
     fkey.close();
     
+    // Handle original file deletion/shredding
+    if (SHRED_MODE) {
+        if (!SILENT_MODE) std::cout << "Shredding original: " << inputFile << std::endl;
+        if (!shredFile(inputFile)) {
+            if (!SILENT_MODE) std::cerr << "Warning: Failed to shred original file\n";
+        }
+    } else if (DELETE_MODE) {
+        if (!SILENT_MODE) std::cout << "Deleting original: " << inputFile << std::endl;
+        if (!deleteFile(inputFile)) {
+            if (!SILENT_MODE) std::cerr << "Warning: Failed to delete original file\n";
+        }
+    }
+    
     return true;
 }
 
@@ -368,7 +488,7 @@ bool encryptDirectory(const std::string& inputDir, const std::string& outputDir,
     }
     
     // Store directory structure
-    std::map<std::string, std::string> fileMap; // relative path -> encrypted filename
+    std::map<std::string, std::string> fileMap;
     size_t fileCounter = 0;
     size_t successCount = 0;
     
@@ -410,6 +530,19 @@ bool encryptDirectory(const std::string& inputDir, const std::string& outputDir,
     if (!SILENT_MODE) {
         std::cout << "\nDirectory encryption complete!\n";
         std::cout << "Files encrypted: " << successCount << "/" << fileCounter << "\n";
+    }
+    
+    // Handle original directory deletion/shredding
+    if (SHRED_MODE) {
+        if (!SILENT_MODE) std::cout << "\nShredding original directory..." << std::endl;
+        if (!shredDirectory(inputDir)) {
+            if (!SILENT_MODE) std::cerr << "Warning: Failed to completely shred original directory\n";
+        }
+    } else if (DELETE_MODE) {
+        if (!SILENT_MODE) std::cout << "\nDeleting original directory..." << std::endl;
+        if (!deleteFile(inputDir)) {
+            if (!SILENT_MODE) std::cerr << "Warning: Failed to delete original directory\n";
+        }
     }
     
     return successCount > 0;
@@ -489,30 +622,54 @@ bool decryptDirectory(const std::string& inputDir, const std::string& outputDir,
 }
 
 int main(int argc, char* argv[]) {
+    std::string customSplash;
+    
+    // Parse flags
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--silent") {
+            SILENT_MODE = true;
+            SHOW_SPLASH = false;
+        } else if (arg == "--delete") {
+            DELETE_MODE = true;
+        } else if (arg == "--shred") {
+            SHRED_MODE = true;
+        } else if (arg == "--no-splash") {
+            SHOW_SPLASH = false;
+        } else if (arg == "--splash" && i + 1 < argc) {
+            customSplash = argv[++i];
+        }
+    }
+    
+    // Show splash screen
+    if (SHOW_SPLASH && !SILENT_MODE) {
+        if (!customSplash.empty()) {
+            showCustomSplash(customSplash);
+        } else {
+            showDefaultSplash();
+        }
+    }
+    
     if (argc < 2) {
-        std::cout << "CipherSplit v2.0 - Secure File/Directory Encryption with Chunking & Scrambling\n\n";
         std::cout << "Usage:\n";
-        std::cout << "  File Encrypt:      " << argv[0] << " -e <input> <output> <keyfile> <passphrase> [--silent]\n";
-        std::cout << "  File Decrypt:      " << argv[0] << " -d <encrypted> <output> <keyfile> <passphrase> [--silent]\n";
-        std::cout << "  Directory Encrypt: " << argv[0] << " -E <input_dir> <output_dir> <passphrase> [--silent]\n";
-        std::cout << "  Directory Decrypt: " << argv[0] << " -D <encrypted_dir> <output_dir> <passphrase> [--silent]\n";
+        std::cout << "  File Encrypt:      " << argv[0] << " -e <input> <output> <keyfile> <pass> [options]\n";
+        std::cout << "  File Decrypt:      " << argv[0] << " -d <encrypted> <output> <keyfile> <pass> [options]\n";
+        std::cout << "  Directory Encrypt: " << argv[0] << " -E <input_dir> <output_dir> <pass> [options]\n";
+        std::cout << "  Directory Decrypt: " << argv[0] << " -D <encrypted_dir> <output_dir> <pass> [options]\n";
         std::cout << "\nOptions:\n";
-        std::cout << "  --silent    Suppress all output messages\n";
+        std::cout << "  --silent          Suppress all output messages\n";
+        std::cout << "  --delete          Delete original files after successful encryption\n";
+        std::cout << "  --shred           Securely shred original files (3-pass overwrite + delete)\n";
+        std::cout << "  --no-splash       Don't show splash screen\n";
+        std::cout << "  --splash <file>   Use custom splash screen from file\n";
         std::cout << "\nNotes:\n";
         std::cout << "  - Directory mode creates individual .bin/.key pairs for each file\n";
-        std::cout << "  - Directory structure is preserved in directory.idx file\n";
+        std::cout << "  - --shred is more secure than --delete but slower\n";
+        std::cout << "  - Custom splash files should be plain text ASCII art\n";
         return 1;
     }
     
     std::string mode = argv[1];
-    
-    // Check for silent mode flag
-    for (int i = 2; i < argc; ++i) {
-        if (std::string(argv[i]) == "--silent") {
-            SILENT_MODE = true;
-            break;
-        }
-    }
     
     if (mode == "-e" && argc >= 6) {
         bool success = encryptFile(argv[2], argv[3], argv[4], argv[5]);
