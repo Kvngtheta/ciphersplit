@@ -9,6 +9,10 @@
 #include <iomanip>
 #include <cstdint>
 #include <chrono>
+#include <filesystem>
+#include <map>
+
+namespace fs = std::filesystem;
 
 const size_t CHUNK_SIZE = 4096;
 const size_t KEY_SIZE = 32;
@@ -168,7 +172,7 @@ bool encryptFile(const std::string& inputFile, const std::string& outputFile,
                  const std::string& keyFile, const std::string& passphrase) {
     std::ifstream fin(inputFile, std::ios::binary);
     if (!fin) {
-        std::cerr << "Cannot open input file\n";
+        if (!SILENT_MODE) std::cerr << "Cannot open input file: " << inputFile << "\n";
         return false;
     }
     
@@ -223,7 +227,7 @@ bool encryptFile(const std::string& inputFile, const std::string& outputFile,
     // Write encrypted file
     std::ofstream fout(outputFile, std::ios::binary);
     if (!fout) {
-        std::cerr << "Cannot open output file\n";
+        if (!SILENT_MODE) std::cerr << "Cannot open output file: " << outputFile << "\n";
         return false;
     }
     
@@ -246,7 +250,7 @@ bool encryptFile(const std::string& inputFile, const std::string& outputFile,
     // Write key file
     std::ofstream fkey(keyFile, std::ios::binary);
     if (!fkey) {
-        std::cerr << "Cannot create key file\n";
+        if (!SILENT_MODE) std::cerr << "Cannot create key file: " << keyFile << "\n";
         return false;
     }
     
@@ -260,8 +264,6 @@ bool encryptFile(const std::string& inputFile, const std::string& outputFile,
     }
     fkey.close();
     
-    std::cout << "Encryption successful!\n";
-    std::cout << "Chunks: " << chunks.size() << "\n";
     return true;
 }
 
@@ -270,7 +272,7 @@ bool decryptFile(const std::string& inputFile, const std::string& outputFile,
     // Read key file
     std::ifstream fkey(keyFile, std::ios::binary);
     if (!fkey) {
-        std::cerr << "Cannot open key file\n";
+        if (!SILENT_MODE) std::cerr << "Cannot open key file: " << keyFile << "\n";
         return false;
     }
     
@@ -294,7 +296,7 @@ bool decryptFile(const std::string& inputFile, const std::string& outputFile,
     // Read encrypted file
     std::ifstream fin(inputFile, std::ios::binary);
     if (!fin) {
-        std::cerr << "Cannot open encrypted file\n";
+        if (!SILENT_MODE) std::cerr << "Cannot open encrypted file: " << inputFile << "\n";
         return false;
     }
     
@@ -302,7 +304,7 @@ bool decryptFile(const std::string& inputFile, const std::string& outputFile,
     fin.read(reinterpret_cast<char*>(&fileChunkCount), sizeof(fileChunkCount));
     
     if (fileChunkCount != chunkCount) {
-        std::cerr << "Chunk count mismatch!\n";
+        if (!SILENT_MODE) std::cerr << "Chunk count mismatch!\n";
         return false;
     }
     
@@ -341,32 +343,195 @@ bool decryptFile(const std::string& inputFile, const std::string& outputFile,
     // Write output
     std::ofstream fout(outputFile, std::ios::binary);
     if (!fout) {
-        std::cerr << "Cannot create output file\n";
+        if (!SILENT_MODE) std::cerr << "Cannot create output file: " << outputFile << "\n";
         return false;
     }
     fout.write(reinterpret_cast<const char*>(fileData.data()), fileData.size());
     fout.close();
     
-    std::cout << "Decryption successful!\n";
     return true;
+}
+
+bool encryptDirectory(const std::string& inputDir, const std::string& outputDir,
+                      const std::string& keyFile, const std::string& passphrase) {
+    if (!fs::exists(inputDir) || !fs::is_directory(inputDir)) {
+        if (!SILENT_MODE) std::cerr << "Input directory does not exist: " << inputDir << "\n";
+        return false;
+    }
+    
+    // Create output directory
+    try {
+        fs::create_directories(outputDir);
+    } catch (const std::exception& e) {
+        if (!SILENT_MODE) std::cerr << "Cannot create output directory: " << e.what() << "\n";
+        return false;
+    }
+    
+    // Store directory structure
+    std::map<std::string, std::string> fileMap; // relative path -> encrypted filename
+    size_t fileCounter = 0;
+    size_t successCount = 0;
+    
+    // Recursively process all files
+    for (const auto& entry : fs::recursive_directory_iterator(inputDir)) {
+        if (fs::is_regular_file(entry)) {
+            std::string relativePath = fs::relative(entry.path(), inputDir).string();
+            std::string encFileName = "file_" + std::to_string(fileCounter++) + ".bin";
+            std::string encKeyName = "file_" + std::to_string(fileCounter - 1) + ".key";
+            
+            std::string encFilePath = (fs::path(outputDir) / encFileName).string();
+            std::string encKeyPath = (fs::path(outputDir) / encKeyName).string();
+            
+            if (!SILENT_MODE) {
+                std::cout << "Encrypting: " << relativePath << std::endl;
+            }
+            
+            if (encryptFile(entry.path().string(), encFilePath, encKeyPath, passphrase)) {
+                fileMap[relativePath] = encFileName;
+                successCount++;
+            } else {
+                if (!SILENT_MODE) std::cerr << "Failed to encrypt: " << relativePath << "\n";
+            }
+        }
+    }
+    
+    // Write master index file
+    std::ofstream indexFile((fs::path(outputDir) / "directory.idx").string());
+    if (!indexFile) {
+        if (!SILENT_MODE) std::cerr << "Cannot create directory index file\n";
+        return false;
+    }
+    
+    for (const auto& [path, encName] : fileMap) {
+        indexFile << path << "|" << encName << "\n";
+    }
+    indexFile.close();
+    
+    if (!SILENT_MODE) {
+        std::cout << "\nDirectory encryption complete!\n";
+        std::cout << "Files encrypted: " << successCount << "/" << fileCounter << "\n";
+    }
+    
+    return successCount > 0;
+}
+
+bool decryptDirectory(const std::string& inputDir, const std::string& outputDir,
+                      const std::string& passphrase) {
+    if (!fs::exists(inputDir) || !fs::is_directory(inputDir)) {
+        if (!SILENT_MODE) std::cerr << "Encrypted directory does not exist: " << inputDir << "\n";
+        return false;
+    }
+    
+    // Read directory index
+    std::string indexPath = (fs::path(inputDir) / "directory.idx").string();
+    std::ifstream indexFile(indexPath);
+    if (!indexFile) {
+        if (!SILENT_MODE) std::cerr << "Cannot open directory index file\n";
+        return false;
+    }
+    
+    std::map<std::string, std::string> fileMap;
+    std::string line;
+    while (std::getline(indexFile, line)) {
+        size_t sep = line.find('|');
+        if (sep != std::string::npos) {
+            std::string origPath = line.substr(0, sep);
+            std::string encName = line.substr(sep + 1);
+            fileMap[origPath] = encName;
+        }
+    }
+    indexFile.close();
+    
+    // Create output directory
+    try {
+        fs::create_directories(outputDir);
+    } catch (const std::exception& e) {
+        if (!SILENT_MODE) std::cerr << "Cannot create output directory: " << e.what() << "\n";
+        return false;
+    }
+    
+    size_t successCount = 0;
+    
+    // Decrypt all files
+    for (const auto& [origPath, encName] : fileMap) {
+        std::string encFilePath = (fs::path(inputDir) / encName).string();
+        std::string encKeyName = encName;
+        encKeyName.replace(encKeyName.find(".bin"), 4, ".key");
+        std::string encKeyPath = (fs::path(inputDir) / encKeyName).string();
+        
+        std::string outputPath = (fs::path(outputDir) / origPath).string();
+        
+        // Create parent directories
+        try {
+            fs::create_directories(fs::path(outputPath).parent_path());
+        } catch (const std::exception& e) {
+            if (!SILENT_MODE) std::cerr << "Cannot create directory: " << e.what() << "\n";
+            continue;
+        }
+        
+        if (!SILENT_MODE) {
+            std::cout << "Decrypting: " << origPath << std::endl;
+        }
+        
+        if (decryptFile(encFilePath, outputPath, encKeyPath, passphrase)) {
+            successCount++;
+        } else {
+            if (!SILENT_MODE) std::cerr << "Failed to decrypt: " << origPath << "\n";
+        }
+    }
+    
+    if (!SILENT_MODE) {
+        std::cout << "\nDirectory decryption complete!\n";
+        std::cout << "Files decrypted: " << successCount << "/" << fileMap.size() << "\n";
+    }
+    
+    return successCount > 0;
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
+        std::cout << "CipherSplit v2.0 - Secure File/Directory Encryption with Chunking & Scrambling\n\n";
         std::cout << "Usage:\n";
-        std::cout << "  Encrypt: " << argv[0] << " -e <input> <output> <keyfile> <passphrase>\n";
-        std::cout << "  Decrypt: " << argv[0] << " -d <encrypted> <output> <keyfile> <passphrase>\n";
+        std::cout << "  File Encrypt:      " << argv[0] << " -e <input> <output> <keyfile> <passphrase> [--silent]\n";
+        std::cout << "  File Decrypt:      " << argv[0] << " -d <encrypted> <output> <keyfile> <passphrase> [--silent]\n";
+        std::cout << "  Directory Encrypt: " << argv[0] << " -E <input_dir> <output_dir> <passphrase> [--silent]\n";
+        std::cout << "  Directory Decrypt: " << argv[0] << " -D <encrypted_dir> <output_dir> <passphrase> [--silent]\n";
+        std::cout << "\nOptions:\n";
+        std::cout << "  --silent    Suppress all output messages\n";
+        std::cout << "\nNotes:\n";
+        std::cout << "  - Directory mode creates individual .bin/.key pairs for each file\n";
+        std::cout << "  - Directory structure is preserved in directory.idx file\n";
         return 1;
     }
     
     std::string mode = argv[1];
     
-    if (mode == "-e" && argc == 6) {
-        return encryptFile(argv[2], argv[3], argv[4], argv[5]) ? 0 : 1;
-    } else if (mode == "-d" && argc == 6) {
-        return decryptFile(argv[2], argv[3], argv[4], argv[5]) ? 0 : 1;
+    // Check for silent mode flag
+    for (int i = 2; i < argc; ++i) {
+        if (std::string(argv[i]) == "--silent") {
+            SILENT_MODE = true;
+            break;
+        }
+    }
+    
+    if (mode == "-e" && argc >= 6) {
+        bool success = encryptFile(argv[2], argv[3], argv[4], argv[5]);
+        if (success && !SILENT_MODE) {
+            std::cout << "Encryption successful!\n";
+        }
+        return success ? 0 : 1;
+    } else if (mode == "-d" && argc >= 6) {
+        bool success = decryptFile(argv[2], argv[3], argv[4], argv[5]);
+        if (success && !SILENT_MODE) {
+            std::cout << "Decryption successful!\n";
+        }
+        return success ? 0 : 1;
+    } else if (mode == "-E" && argc >= 5) {
+        return encryptDirectory(argv[2], argv[3], "", argv[4]) ? 0 : 1;
+    } else if (mode == "-D" && argc >= 5) {
+        return decryptDirectory(argv[2], argv[3], argv[4]) ? 0 : 1;
     } else {
-        std::cerr << "Invalid arguments\n";
+        if (!SILENT_MODE) std::cerr << "Invalid arguments\n";
         return 1;
     }
 }
