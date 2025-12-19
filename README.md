@@ -1,6 +1,6 @@
-# CipherSplit - File Encryption with Chunking & Scrambling
+# CipherSplit - File/Directory Encryption with Chunking & Scrambling
 
-A secure file encryption tool that reverses, chunks, encrypts, and scrambles your files. No external dependencies required - uses only standard C++17.
+A secure file and directory encryption tool that reverses, chunks, encrypts, and scrambles your files. Supports recursive directory encryption. No external dependencies required - uses only standard C++17.
 
 ## Features
 
@@ -11,6 +11,7 @@ A secure file encryption tool that reverses, chunks, encrypts, and scrambles you
 - Dual-File Security - Requires both encrypted file AND key file
 - Passphrase Protection - SHA-256 key derivation with random salt
 - Fully Reversible - Perfect reconstruction of original file
+- Directory Support - Recursively encrypt/decrypt entire folder structures
 - Silent Mode - Optional flag to suppress all output
 
 ## Security Model
@@ -35,23 +36,23 @@ An attacker needs **all three** to recover your data:
 ### Compilation
 
 **Linux/Mac:**
-```
+```bash
 g++ -o ciphersplit ciphersplit.cpp -std=c++17
 ```
 
 **Windows (MinGW):**
-```
+```bash
 g++ -o ciphersplit.exe ciphersplit.cpp -std=c++17
 ```
 
 **Windows (Visual Studio):**
-```
+```bash
 cl /EHsc /std:c++17 ciphersplit.cpp
 ```
 
 ## Usage
 
-### Encrypt a File
+### Encrypt a Single File
 
 ```bash
 ./ciphersplit -e <input_file> <output_encrypted> <output_keyfile> <passphrase> [--silent]
@@ -71,7 +72,7 @@ cl /EHsc /std:c++17 ciphersplit.cpp
 - `encrypted.bin` - Your encrypted, scrambled data
 - `keyfile.key` - The key file needed for decryption
 
-### Decrypt a File
+### Decrypt a Single File
 
 ```bash
 ./ciphersplit -d <encrypted_file> <output_file> <keyfile> <passphrase> [--silent]
@@ -85,9 +86,42 @@ cl /EHsc /std:c++17 ciphersplit.cpp
 **Output:**
 - `recovered.txt` - Your original file, perfectly restored
 
+### Encrypt an Entire Directory
+
+```bash
+./ciphersplit -E <input_directory> <output_directory> <passphrase> [--silent]
+```
+
+**Example:**
+```bash
+./ciphersplit -E ~/Documents/sensitive ~/Encrypted/backup "MySecurePassword123"
+```
+
+**Output:**
+- Creates `output_directory` containing:
+  - `file_0.bin`, `file_0.key` - First file encrypted
+  - `file_1.bin`, `file_1.key` - Second file encrypted
+  - `file_N.bin`, `file_N.key` - Nth file encrypted
+  - `directory.idx` - Master index mapping original paths to encrypted files
+
+### Decrypt an Entire Directory
+
+```bash
+./ciphersplit -D <encrypted_directory> <output_directory> <passphrase> [--silent]
+```
+
+**Example:**
+```bash
+./ciphersplit -D ~/Encrypted/backup ~/Documents/restored "MySecurePassword123"
+```
+
+**Output:**
+- Recreates original directory structure in `output_directory`
+- All files decrypted to their original names and locations
+
 ## How It Works
 
-### Encryption Process
+### Single File Encryption Process
 
 1. Read - Loads your input file into memory
 2. Reverse - Reverses entire file content (backwards)
@@ -99,7 +133,7 @@ cl /EHsc /std:c++17 ciphersplit.cpp
 8. Write - Saves scrambled chunks to `.bin` file
 9. Save Key - Writes salt and chunk mapping to `.key` file
 
-### Decryption Process
+### Single File Decryption Process
 
 1. Read Key File - Loads salt and chunk mapping
 2. Derive Key - SHA-256(passphrase + salt) = encryption key
@@ -109,6 +143,21 @@ cl /EHsc /std:c++17 ciphersplit.cpp
 6. Reassemble - Chunks concatenated in correct order
 7. Reverse - Content reversed back to original
 8. Write - Saves recovered file
+
+### Directory Encryption Process
+
+1. Scan - Recursively finds all files in directory tree
+2. Enumerate - Assigns each file a sequential ID (file_0, file_1, etc.)
+3. Encrypt Each - Each file encrypted individually with its own .bin and .key files
+4. Index - Creates `directory.idx` mapping original paths to encrypted filenames
+5. Preserve Structure - Original directory hierarchy stored in index
+
+### Directory Decryption Process
+
+1. Read Index - Loads `directory.idx` to get file mappings
+2. Recreate Structure - Creates original directory tree
+3. Decrypt Each - Each .bin/.key pair decrypted to original location
+4. Restore Names - Files restored with original names and paths
 
 ## File Format Specifications
 
@@ -131,6 +180,15 @@ cl /EHsc /std:c++17 ciphersplit.cpp
 [For each chunk:]
   [8 bytes]  Chunk ID
   [8 bytes]  Original position in file
+```
+
+### Directory Index File (directory.idx)
+
+```
+[Text file format, one line per file:]
+original/path/to/file.txt|file_0.bin
+another/path/document.pdf|file_1.bin
+subdirectory/image.jpg|file_2.bin
 ```
 
 ## Security Features
@@ -179,7 +237,7 @@ Bad: `password123`
 
 ## Examples
 
-### Basic Encryption
+### Basic File Encryption
 ```bash
 # Encrypt a document
 ./ciphersplit -e document.pdf encrypted.bin key.key "StrongPass123!"
@@ -188,11 +246,37 @@ Bad: `password123`
 ./ciphersplit -d encrypted.bin test.pdf key.key "StrongPass123!"
 ```
 
+### Directory Encryption
+```bash
+# Encrypt entire project folder
+./ciphersplit -E ~/Projects/MyApp ~/Backup/MyApp_encrypted "SecurePass2024"
+
+# Later, decrypt it back
+./ciphersplit -D ~/Backup/MyApp_encrypted ~/Projects/MyApp_restored "SecurePass2024"
+```
+
+### Backup Strategy with Directory Mode
+```bash
+# Encrypt sensitive documents
+./ciphersplit -E ~/Documents/Tax_Returns ~/Encrypted/Taxes_2024 "MyTaxPassword"
+
+# Copy encrypted folder to cloud storage
+cp -r ~/Encrypted/Taxes_2024 ~/Dropbox/Backups/
+
+# Store passphrase separately (password manager)
+
+# Later, restore from cloud
+./ciphersplit -D ~/Dropbox/Backups/Taxes_2024 ~/Restored/Tax_Returns "MyTaxPassword"
+```
+
 ### Silent Mode
 ```bash
 # No output - useful for scripts
 ./ciphersplit -e data.txt encrypted.bin key.key "MyPass" --silent
 echo $?  # Check exit code: 0 = success, 1 = failure
+
+# Silent directory encryption
+./ciphersplit -E ~/data ~/encrypted "pass" --silent && echo "Success" || echo "Failed"
 ```
 
 ### Secure Storage Strategy
@@ -236,9 +320,15 @@ cp local.key ~/Dropbox/backup.key
 - Key file doesn't match encrypted file
 - Files may be corrupted
 
+### Directory decryption fails
+- Missing or corrupted `directory.idx` file
+- Wrong passphrase
+- Missing .bin or .key files
+
 ### Compilation errors
 - Ensure C++17 support: add `-std=c++17` flag
 - Check compiler version is recent enough
+- Ensure `<filesystem>` header is available (GCC 8+, Clang 7+, MSVC 2017+)
 
 ## Technical Details
 
@@ -249,14 +339,16 @@ cp local.key ~/Dropbox/backup.key
 - Nonce: 64-bit unique per chunk
 
 ### Performance
-- Memory Usage: Loads entire file into memory
-- Speed: ~50-100 MB/s (varies by system)
+- Memory Usage: Loads entire file into memory (single file mode)
+- Directory Mode: Processes one file at a time (memory efficient)
+- Speed: ~50-100 MB/s per file (varies by system)
 - Chunk Size: 4096 bytes (configurable in source)
 
 ### Limitations
-- File must fit in available RAM
-- Not suitable for files larger than available memory
-- No streaming mode (processes entire file at once)
+- Single file mode: File must fit in available RAM
+- Not suitable for files larger than available memory in single file mode
+- No streaming mode for single files (processes entire file at once)
+- Directory mode has no size limitations (processes one file at a time)
 
 ## Customization
 
@@ -294,6 +386,21 @@ For issues, questions, or improvements:
 
 ## Version
 
-**Version:** 1.0  
-**Date:** December 2024  
-**Language:** C++17
+Version: 2.0  
+Date: December 2025
+Language: C++17
+
+## Changelog
+
+Version 2.0:
+- Added full directory encryption/decryption support
+- Recursive directory traversal
+- Directory structure preservation
+- Individual file encryption in directory mode
+- Master index file for directory mapping
+
+Version 1.0:
+- Initial release
+- Single file encryption/decryption
+- Chunking and scrambling
+- Silent mode
