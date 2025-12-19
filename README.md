@@ -2,6 +2,8 @@
 
 A secure file and directory encryption tool that reverses, chunks, encrypts, and scrambles your files. Supports recursive directory encryption. No external dependencies required - uses only standard C++17.
 
+This is apart of my testing for file encryption when doing Ransomware Simulations.
+
 ## Features
 
 - Content Reversal - Entire file is reversed before processing
